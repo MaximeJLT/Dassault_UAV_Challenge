@@ -48,7 +48,7 @@ The aircraft remains in AUTO for the entire mission except for the final QRTL tr
 
 ```
 uav-autonomy/
-├── Flight control
+├── ground_station
 │   ├── controller_fsm.py      # Main entry — mission FSM
 │   ├── arm_pipeline.py        # Takeoff, arming, FW↔VTOL transitions, failsafes
 │   ├── connection.py          # MAVLink connection (serial/UDP), pitot check

@@ -5,11 +5,27 @@ Author: Maxime Jolliot
 
 ---
 
+## Context
+
+This codebase is the autonomous perception and navigation stack developed during the **2025–2026 Dassault UAV Challenge**, in which our ISAE-ENSMA team competed against seven other engineering schools. Unlike most competing teams, who used off-the-shelf UAV platforms and focused their effort on software, our team chose to design and build the airframe entirely in-house — mechanical structure, electronics, and system integration — over the course of nine months.
+
+This decision shaped the scope of what made it onto the aircraft this year. The team prioritized producing a robust, fully self-built flying platform that we understand end-to-end, and the autonomy stack documented here was developed and validated in parallel in simulation, ready to be integrated on the platform for the next campaign. The team was awarded the **Jury's Favorite Prize** and finished in the top three of eight teams.
+
+---
+
 ## Problem Statement
 
 We were asked to build a fully autonomous mission for a fixed-wing/VTOL hybrid UAV (QuadPlane) operating in a constrained domain (≈ 100 × 50 m): the aircraft must take off vertically, switch to forward flight to search for a small ground target with a camera, **detect the target via a neural network**, return to hover above it, hold position for a fixed duration, then return to home and land — all without human intervention beyond the launch command.
 
 On paper the problem looks like a string of well-understood building blocks: ArduPilot for the autopilot, MAVLink for the bus, YOLO for the detection, some trigonometry for the pixel-to-GPS conversion. In practice almost every one of those blocks revealed a subtle assumption that broke when applied to our hardware and our flight domain. This README documents the architecture **as it actually exists today** and the reasoning that led there. The intent is not to describe a clean design produced in one shot, but the design that survived several iterations of contact with the real system.
+
+---
+
+## Integration Status
+
+The stack is **fully validated in ArduPilot SITL simulation**, including the perception thread, the mission FSM, the pixel-to-GPS conversion, the mission upload protocol, and all five state transitions. The complete autonomous mission runs end-to-end in simulation without intervention.
+
+The stack was **not flown on the physical aircraft during the 2025–2026 campaign**, because the team's effort was committed to designing and manufacturing the airframe from scratch. The code is structured so that the transition from simulation to hardware requires only the call to `connect_udp()` to be replaced with `connect_serial()` — no logic changes are needed. The next-campaign integration plan is detailed at the end of this document.
 
 ---
 
@@ -197,12 +213,26 @@ The trade-offs are real. We accept that the aircraft may overshoot the target du
 
 ---
 
+## Next Campaign — Integration Plan
+
+The 2026–2027 edition of the Dassault UAV Challenge is the integration target for this stack. With the airframe now built and characterized, the work shifts from designing the platform to flying the autonomy on it. The plan, in order:
+
+1. **Bench integration.** Mount the ground station and SiK radios next to the aircraft on the bench, verify MAVLink connectivity end-to-end on the real autopilot, run the FSM in `AUTO` with the aircraft disarmed, confirm that mission uploads and state transitions behave identically to SITL.
+2. **Tethered hover and taxi tests.** Validate the FW↔VTOL transition commands and the QRTL behavior on the real aircraft, with the autonomy stack passive (monitoring only).
+3. **First semi-autonomous flight.** Manual takeoff, FSM running in `SEARCH_FW` for the hypodrome, manual landing. Confirms that the perception thread and the GPS conversion produce correct target coordinates in real flight conditions.
+4. **First fully autonomous flight.** Full mission end-to-end on a controlled test field, target placed at a known GPS coordinate to validate the conversion against ground truth.
+5. **FOV calibration on the production camera.** The conversion math currently uses nominal manufacturer values; a one-time ground-target calibration is expected to significantly tighten the GPS estimate.
+6. **Custom-trained detector.** Collect an annotated dataset of the competition target from drone-perspective imagery and fine-tune YOLOv8 on it. The current pre-trained COCO model is a placeholder.
+
+---
+
 ## Open Problems / Future Work
 
-- **Custom-trained detector** on aerial imagery (current dataset is COCO, not drone-perspective).
+Beyond the integration plan above, several directions remain open for the architecture itself:
+
 - **Onboard inference** to remove the video-link latency from the perception loop. Currently every detection costs ~100 ms of capture + ~50 ms of inference + ~50 ms of GPS upload — at 10 m/s that is 2 m of aircraft displacement between "the target was here" and "go here."
 - **Moving-target tracking** using `velocity.py` and a Kalman filter on successive detections.
-- **FOV calibration procedure** for the production camera (the conversion math currently uses nominal manufacturer values; a one-time ground-target calibration would tighten the GPS estimate significantly).
+- **Multi-target scenarios** where the FSM must choose between several candidates rather than locking onto the first detection.
 
 ---
 

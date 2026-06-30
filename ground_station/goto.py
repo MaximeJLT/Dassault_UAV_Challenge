@@ -11,35 +11,19 @@ def navigate_to_target_vtol(master, tgt_lat, tgt_lon, alt_rel_m,
                              arrival_radius_m=15.0, timeout_s=120.0,
                              gcs_keepalive_fn=None):
     """
-    Navigue activement vers une cible GPS en mode VTOL apres une transition FW\u2192VTOL.
-
-    Strategie 100 % AUTO :
-      - Upload d'une micro-mission [ NAV_WAYPOINT cible + NAV_LOITER_UNLIM ]
-      - Passage en AUTO ArduPlane navigue activement vers le waypoint,
-        puis loitre sur place indefiniment (LOITER_UNLIM).
-      - On surveille la distance ; quand le drone est dans arrival_radius_m on
-        retourne True. Le drone reste en AUTO/LOITER_UNLIM pas de QLOITER.
-
-    Retourne True si arrivee dans le rayon, False si timeout.
+    Navigue activement vers une cible GPS en mode VTOL apres une transition FW.
     """
     from arm_pipeline import set_mode_and_confirm
 
-    # ------------------------------------------------------------------ #
-    # 1. Uploader une micro-mission : NAV_WAYPOINT cible + LOITER_UNLIM
-    # ------------------------------------------------------------------ #
     print(f"Uploading approach mission (AUTO): lat={tgt_lat:.7f} lon={tgt_lon:.7f} alt={alt_rel_m}m")
 
     items = [
-        # seq=0 : NAV_WAYPOINT vers la cible
         dict(seq=0, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
              command=mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
              current=1, autocont=1,
              p1=0, p2=arrival_radius_m, p3=0, p4=0,
              lat=tgt_lat, lon=tgt_lon, alt=alt_rel_m),
 
-        # seq=1 : LOITER_UNLIM sur la cible
-        #   Empeche "mission complete RTL" et maintient le drone en AUTO
-        #   stationnaire au-dessus de la cible, sans jamais quitter AUTO.
         dict(seq=1, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
              command=mavutil.mavlink.MAV_CMD_NAV_LOITER_UNLIM,
              current=0, autocont=1,
@@ -47,16 +31,11 @@ def navigate_to_target_vtol(master, tgt_lat, tgt_lon, alt_rel_m,
              lat=tgt_lat, lon=tgt_lon, alt=alt_rel_m),
     ]
 
-    # Upload avec keepalive pour eviter FS_GCS_ENABL pendant le clear
     _upload_items(master, items, keepalive_fn=gcs_keepalive_fn)
 
-    # D�marrer explicitement au WP 0
     master.mav.mission_set_current_send(master.target_system, master.target_component, 0)
     time.sleep(0.2)
 
-    # ------------------------------------------------------------------ #
-    # 2. Passer en AUTO et surveiller la distance
-    # ------------------------------------------------------------------ #
     set_mode_and_confirm(master, "AUTO", timeout=15)
 
     t0 = time.time()
@@ -117,7 +96,6 @@ def upload_loiter_unlim(master, lat_deg, lon_deg, alt_rel_m=ALT_REL_M,
 def send_hold_position(master, lat_deg, lon_deg, alt_rel_m=ALT_REL_M):
     """
     Maintient le drone au-dessus d'une position GPS en QLOITER.
-    Conserv� pour compatibilit� \u2014 la FSM utilise d�sormais upload_loiter_unlim().
     """
     master.mav.set_position_target_global_int_send(
         0,
@@ -140,7 +118,6 @@ def send_hold_position(master, lat_deg, lon_deg, alt_rel_m=ALT_REL_M):
 
 
 def release_rc_override(master):
-    """Rel�che tous les overrides RC."""
     master.mav.rc_channels_override_send(
         master.target_system, master.target_component,
         0, 0, 0, 0, 0, 0, 0, 0
@@ -148,13 +125,8 @@ def release_rc_override(master):
 
 
 def send_guided_GPS_target_one(master, lat_deg, lon_deg, alt_rel_m=ALT_REL_M):
-    """Alias pour compatibilit�."""
     send_hold_position(master, lat_deg, lon_deg, alt_rel_m)
 
-
-# ------------------------------------------------------------------ #
-# Helpers internes
-# ------------------------------------------------------------------ #
 
 def _dist_m(lat1, lon1, lat2, lon2):
     import math
@@ -172,19 +144,15 @@ def _upload_items(master, items, timeout=15, keepalive_fn=None):
     from connection import send_gcs_heartbeat
     n = len(items)
 
-    # Heartbeat avant clear pour eviter que FS_GCS_ENABL se declenche
     send_gcs_heartbeat(master)
 
-    # Vider buffer
     _flush(master, 0.3)
 
-    # Clear
     master.mav.mission_clear_all_send(master.target_system, master.target_component)
     send_gcs_heartbeat(master)  # heartbeat immediatement apres clear
     time.sleep(0.3)
     _flush(master, 0.2)
 
-    # Count
     master.mav.mission_count_send(master.target_system, master.target_component, n, 0)
 
     t0 = time.time()
@@ -207,7 +175,6 @@ def _upload_items(master, items, timeout=15, keepalive_fn=None):
             seq = int(msg.seq)
             if 0 <= seq < n:
                 it = items[seq]
-                # Gestion NaN pour p4 (yaw ignor�)
                 p4 = it["p4"] if it["p4"] == it["p4"] else 0.0  # NaN \u2192 0
                 master.mav.mission_item_int_send(
                     master.target_system, master.target_component,

@@ -1,4 +1,3 @@
-# controller_fsm.py
 import time
 import math
 import threading
@@ -22,18 +21,6 @@ from ml.NN import get_normalized_coordinates, latest_detection
 
 METERS_PER_DEG_LAT = 111320.0
 
-# -----------------------------------------------------------------------
-# Distance de freinage QuadPlane FW → VTOL
-#
-# A ~18 m/s (vitesse de transition ArduPlane), le freinage en VTOL
-# prend ~100–150 m selon les PIDs et le vent.
-# On déclenche la transition FW→VTOL quand le drone est encore à
-# TRANSITION_TRIGGER_M de la cible, pour qu'il soit à l'arrêt à l'arrivée.
-#
-# À calibrer sur le terrain selon le vrai comportement de l'UAV :
-#   - trop court → drone dépasse encore la cible
-#   - trop long  → transition déclenchée trop tôt, drone freine loin
-# -----------------------------------------------------------------------
 TRANSITION_TRIGGER_M = 200.0   # distance à laquelle déclencher FW→VTOL (m)
 APPROACH_RADIUS_M    = 15.0    # rayon pour démarrer le chrono de hold (m)
 APPROACH_TIMEOUT_S   = 120.0   # timeout approche après transition (s)
@@ -110,7 +97,7 @@ def wait_disarmed(master, timeout=120):
         if hb:
             armed = (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
             if not armed:
-                print("✅ UAV disarmed")
+                print("UAV disarmed")
                 return True
     raise RuntimeError("Disarming timeout")
 
@@ -120,7 +107,7 @@ def _kill_switch_listener(master):
     Thread de fond qui écoute la touche K.
     Appuyer sur K + Entrée déclenche le kill switch.
     """
-    print("⚠️  Kill switch actif – appuie sur K + Entrée pour désarmer en vol")
+    print("Kill switch actif – appuie sur K + Entrée pour désarmer en vol")
     while True:
         try:
             key = input()
@@ -130,9 +117,6 @@ def _kill_switch_listener(master):
                 break
         except Exception:
             break
-
-
-
 
 def wait_landed(master, timeout=240):
     """
@@ -146,10 +130,10 @@ def wait_landed(master, timeout=240):
         last_hb = gcs_keepalive_tick(master, last_hb, period_s=1.0)
         msg = master.recv_match(type="EXTENDED_SYS_STATE", blocking=True, timeout=1)
         if msg and int(msg.landed_state) == 1:
-            print("✅ UAV landed")
+            print("UAV landed")
             return True
         if time.time() - last_print > 2.0:
-            print("🟡 Waiting for landing...")
+            print("Waiting for landing...")
             last_print = time.time()
     raise RuntimeError("Timeout waiting for landing")
 
@@ -165,27 +149,18 @@ class State(Enum):
 
 
 def main():
-    # ---- Params ----
     ALT_TARGET_M = 30.0
     FW_SEARCH_AIRSPD_MPS = 10.0
     DT           = 0.5
     HOLD_TIME_S  = 30.0
 
-    # ---- Setup ----
-    # Vol réel via télémétrie série (SiK / RFD900 / etc.)
-    # Adapter le port selon l'OS :
-    #   Linux   → "/dev/ttyUSB0"  ou  "/dev/ttyACM0"
-    #   Windows → "COM3", "COM5", etc.
     master = connect_serial(port="COM5", baud=57600)
-    # master = connect_udp()   # ← SITL/UDP
-
     kill_thread = threading.Thread(target=_kill_switch_listener, args=(master,), daemon=True)
     kill_thread.start()
 
     get_normalized_coordinates_thread = threading.Thread(target=get_normalized_coordinates, daemon=True)
     get_normalized_coordinates_thread.start()
 
-    # --- Vérification pré-vol ---
     print("\n=== PRÉ-VOL: vérification capteur pitot ===")
     airspeed_ok = check_airspeed_sensor(master, timeout=5.0)
     if airspeed_ok:
@@ -198,14 +173,11 @@ def main():
         except KeyboardInterrupt:
             print("Annulé.")
             return
-    print("==========================================\n")
 
     start_time = time.time()
 
-    # Décollage VTOL + transition FW + lancement AUTO sur hypodrome
     pipeline_quadplane_vtol_takeoff_to_auto(master, target_alt=ALT_TARGET_M, airspeed_mps=FW_SEARCH_AIRSPD_MPS)
 
-    # state vars
     state = State.SEARCH_FW
     target_latlon = None
     last_lat = None
@@ -216,7 +188,6 @@ def main():
 
         last_gcs_hb = gcs_keepalive_tick(master, last_gcs_hb, period_s=1.0)
 
-        # --- Position (non-blocking) ---
         msg = master.recv_match(type="GLOBAL_POSITION_INT", blocking=False)
         if msg is not None:
             last_lat = msg.lat / 1e7
@@ -226,31 +197,19 @@ def main():
             time.sleep(DT)
             continue
 
-        # ================================================================
         if state == State.SEARCH_FW:
-            # Drone en AUTO sur le circuit hypodrome — on scanne avec le gimbal
-            # en attendant la détection NN. Le mode AUTO n'est pas touché ici.
 
-            # ---- Intégration NN (remplacer ce bloc) ----
             if latest_detection is not None:
                 x, y, w, h, track_id = latest_detection
                 print(f"Track ID: {track_id}, Normalized Box: (x={x}, y={y}, w={w}, h={h})")
                 target_latlon = GPS_target(master, x, y, w, h, track_id)
                 print(f"Target GPS: lat={target_latlon[0]:.7f}, lon={target_latlon[1]:.7f}")
                 state = State.TRACK_DETECTED
-                nn_module.latest_detection = None  # reset after processing
-
-            # Simulation détection après 120s
-            # if time.time() - start_time > 120.0:
-            #     print("SIMULATED TARGET DETECTED")
-            #     target_latlon = (last_lat, last_lon)
-            #     state = State.TRACK_DETECTED
+                nn_module.latest_detection = None  
 
             time.sleep(DT)
             if state != State.SEARCH_FW:
                 continue
-
-        # ================================================================
         elif state == State.TRACK_DETECTED:
             if target_latlon is None:
                 state = State.SEARCH_FW
@@ -259,27 +218,18 @@ def main():
             d = dist_to_wp_m(tgt_lat, last_lat, last_lon, tgt_lat, tgt_lon)
             print(f"Target locked at {tgt_lat:.7f}, {tgt_lon:.7f} (d={d:.1f}m)")
             print(f"Transition will trigger at d <= {TRANSITION_TRIGGER_M}m")
-            # Drone toujours en AUTO — on attend juste d'être assez proche
             state = State.TRANSITION_TO_VTOL
 
-        # ================================================================
         elif state == State.TRANSITION_TO_VTOL:
-            # Demande la transition FW→VTOL (MAV_CMD_DO_VTOL_TRANSITION).
-            # Le drone est toujours en AUTO pendant la transition.
             transition_fw_to_vtol(master)
             state = State.VTOL_HOLD_OVER_TARGET
 
-        # ================================================================
         elif state == State.VTOL_HOLD_OVER_TARGET:
             tgt_lat, tgt_lon = target_latlon
             last_gcs_hb = time.time()
 
             print(f"Navigating to target in AUTO: lat={tgt_lat:.7f}, lon={tgt_lon:.7f}")
 
-            # --- Phase 1 : navigation active vers la cible (AUTO) ---
-            # Upload [ NAV_WAYPOINT cible + LOITER_UNLIM ] → AUTO.
-            # ArduPlane navigue activement vers la cible, puis loitre.
-            # Le drone ne quitte jamais AUTO.
             def _hb():
                 nonlocal last_gcs_hb
                 last_gcs_hb = gcs_keepalive_tick(master, last_gcs_hb, period_s=1.0)
@@ -298,7 +248,6 @@ def main():
                 print("On target — holding in AUTO/LOITER_UNLIM")
             else:
                 print("Navigation timeout — uploading LOITER_UNLIM at current position")
-                # Fallback : loitrer à la position actuelle en AUTO
                 upload_loiter_unlim(
                     master,
                     lat_deg=last_lat,
@@ -307,9 +256,6 @@ def main():
                     gcs_keepalive_fn=_hb,
                 )
 
-            # --- Phase 2 : hold statique en AUTO/LOITER_UNLIM ---
-            # Le drone loitre en AUTO. On chronomètre HOLD_TIME_S secondes
-            # puis on commande le retour. Aucun changement de mode ici.
             print(f"HOLD AUTO/LOITER_UNLIM pendant {HOLD_TIME_S:.0f}s...")
             t0 = time.time()
             while True:
@@ -331,7 +277,6 @@ def main():
 
             state = State.RETURN_HOME
 
-        # ================================================================
         elif state == State.RETURN_HOME:
             # Seul endroit où l'on quitte AUTO : QRTL pour le retour/atterrissage.
             print("RETURN HOME: switching to QRTL (safe VTOL return mode)")
@@ -341,8 +286,6 @@ def main():
             wait_disarmed(master, timeout=120)
             print("RETURN HOME complete")
             break
-
-        # ================================================================
         elif state == State.FAILSAFE:
             print("FAILSAFE: switching to QRTL")
             try:

@@ -38,7 +38,6 @@ def upload_mission_from_file(master, filepath, timeout=30):
       envoye tous les items (signe d'une session concurrente ouverte par MAVProxy)
       et on relance proprement
     """
-    # 1) Lecture du fichier
     with open(filepath, "r", encoding="utf-8") as f:
         lines = [ln.strip() for ln in f.readlines() if ln.strip()]
 
@@ -68,28 +67,23 @@ def upload_mission_from_file(master, filepath, timeout=30):
 
     n = len(items)
 
-    # On tente l'upload jusqu'a MAX_ATTEMPTS fois
-    # (necessaire car MAVProxy peut ouvrir une session concurrente)
     MAX_ATTEMPTS = 5
     for attempt in range(1, MAX_ATTEMPTS + 1):
         print(f"Uploading mission: {n} items (attempt {attempt}/{MAX_ATTEMPTS})")
 
-        # Vider le buffer avant chaque tentative
         _flush_input(master, duration=0.5)
 
-        # Clear mission existante
         master.mav.mission_clear_all_send(
             master.target_system, master.target_component
         )
         time.sleep(0.5)
         _flush_input(master, duration=0.3)
 
-        # Envoyer MISSION_COUNT
         master.mav.mission_count_send(
             master.target_system,
             master.target_component,
             n,
-            0   # mission_type = MAV_MISSION_TYPE_MISSION
+            0   
         )
 
         t0 = time.time()
@@ -114,7 +108,6 @@ def upload_mission_from_file(master, filepath, timeout=30):
                 ack_type = getattr(msg, "type", -1)
 
                 if ack_type == 0:
-                    # Succes !
                     print("Mission upload accepted")
                     master.mav.mission_set_current_send(
                         master.target_system, master.target_component, 1
@@ -124,25 +117,19 @@ def upload_mission_from_file(master, filepath, timeout=30):
                     break
 
                 if ack_type == 13:
-                    # INVALID_SEQUENCE
                     if highest_seq_seen < n - 1:
-                        # On n'a pas encore fini : MAVProxy a ouvert une session
-                        # concurrente, on relance
                         print(f"INVALID_SEQUENCE (seq max atteint: {highest_seq_seen}), relance...")
                         retry = True
                         break
                     else:
-                        # On a envoye tous les items, c'est un double-ACK residuel
                         print(f"INVALID_SEQUENCE ignore (upload complet)")
                         continue
 
                 if ack_type == 5:
-                    # OPERATION_CANCELLED : MAVProxy a cancelle notre session
                     print(f"OPERATION_CANCELLED par session concurrente, relance...")
                     retry = True
                     break
 
-                # Autre erreur fatale
                 print(f"Mission upload failed, ACK type={ack_type}")
                 retry = True
                 break
@@ -156,8 +143,6 @@ def upload_mission_from_file(master, filepath, timeout=30):
                 print(f"seq invalide {seq_req}, ignore")
                 continue
 
-            # Deduplication : on repond toujours (ArduPilot peut re-demander
-            # apres un timeout reseau), mais on log si c'est un doublon
             if seq_req == last_replied_seq:
                 print(f"retransmission item {seq_req}/{n-1}")
             else:
@@ -227,17 +212,13 @@ def upload_prefixed_mission(master, prefix_items, mission_filepath):
 
     merged = []
 
-    # Prefix items keep the first slots: 0,1,2,...
     for i, it in enumerate(prefix_items):
         new_it = dict(it)
         new_it["seq"] = i
-        # current=1 only for the VTOL_TAKEOFF item if you want; otherwise 0 is okay too.
-        # We keep your current convention here.
         merged.append(new_it)
 
     offset = len(prefix_items)
 
-    # Append file mission after the prefix
     for j, it in enumerate(mission_items):
         new_it = dict(it)
         new_it["seq"] = offset + j

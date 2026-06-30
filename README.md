@@ -62,9 +62,6 @@ uav-autonomy/
 │   └── conversion.py          # Pixel (u,v) → GPS (lat, lon)
 │
 ├── Utilities
-│   ├── search.py              # Parameter inspection
-│   ├── test_fc.py             # MAVLink heartbeat smoke test
-│   ├── test_perception.py     # Standalone perception test (no autopilot needed)
 │   └── run_sitl.sh            # Launch ArduPlane SITL
 │
 └── Legacy / unused today

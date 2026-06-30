@@ -21,9 +21,9 @@ from ml.NN import get_normalized_coordinates, latest_detection
 
 METERS_PER_DEG_LAT = 111320.0
 
-TRANSITION_TRIGGER_M = 200.0   # distance à laquelle déclencher FW→VTOL (m)
-APPROACH_RADIUS_M    = 15.0    # rayon pour démarrer le chrono de hold (m)
-APPROACH_TIMEOUT_S   = 120.0   # timeout approche après transition (s)
+TRANSITION_TRIGGER_M = 200.0   
+APPROACH_RADIUS_M    = 15.0    
+APPROACH_TIMEOUT_S   = 120.0  
 
 
 
